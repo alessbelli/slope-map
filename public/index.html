@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Slope Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #map { position: absolute; inset: 0; }
+
+    .overlay {
+      position: absolute;
+      z-index: 10;
+      padding: 8px 14px;
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      color: #111;
+    }
+
+    .controls-tl {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .controls-tl .overlay { position: static; }
+
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+
+    .search {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+    }
+    .search svg { width: 14px; height: 14px; opacity: 0.55; }
+    .search input {
+      border: none;
+      background: transparent;
+      outline: none;
+      font-size: 14px;
+      width: 220px;
+      color: #111;
+    }
+    .search input::placeholder { color: #666; }
+    .search.searching svg { animation: spin 0.7s linear infinite; opacity: 0.85; }
+
+    .gh-link {
+      top: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .gh-link:hover { background: rgba(255, 255, 255, 0.75); }
+    .gh-link svg { width: 18px; height: 18px; display: block; }
+
+    .status {
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid rgba(0,0,0,0.15);
+      border-top-color: #111;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .legend {
+      bottom: 24px;
+      left: 14px;
+      min-width: 180px;
+      font-size: 12px;
+    }
+    .legend-title {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .legend-bar {
+      height: 10px;
+      border-radius: 3px;
+      background: linear-gradient(
+        to right,
+        #2c7bb6 0%,
+        #abd9e9 25%,
+        #ffffbf 50%,
+        #fdae61 75%,
+        #d7191c 100%
+      );
+    }
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="controls-tl">
+    <div class="overlay title">slope map</div>
+    <div class="overlay search" id="search">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M11.74 10.34a6 6 0 1 0-1.4 1.4l3.46 3.46a1 1 0 0 0 1.4-1.4l-3.46-3.46zM6.5 11a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/>
+      </svg>
+      <input id="search-input" type="text" placeholder="search a city…" autocomplete="off" spellcheck="false" />
+    </div>
+  </div>
+
+  <a class="overlay gh-link" href="https://github.com/alessbelli/slope-map" target="_blank" rel="noopener noreferrer">
+    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/>
+    </svg>
+    <span>GitHub</span>
+  </a>
+
+  <div class="overlay status" id="status" hidden>
+    <span class="spinner"></span>
+    <span id="status-text">loading…</span>
+  </div>
+
+  <div class="overlay legend" id="legend" hidden>
+    <div class="legend-title">slope (% grade)</div>
+    <div class="legend-bar"></div>
+    <div class="legend-labels">
+      <span id="legend-min">0%</span>
+      <span id="legend-mid">—</span>
+      <span id="legend-max">—</span>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script>
+    // ----- Map -----
+    const VIEW_STORAGE_KEY = 'slope-map-view-v1';
+    const DEFAULT_VIEW = { lng: -122.4194, lat: 37.7749, zoom: 13.5 };
+    const savedView = (() => {
+      try { return JSON.parse(localStorage.getItem(VIEW_STORAGE_KEY)) || null; }
+      catch { return null; }
+    })();
+    const initialView = savedView ?? DEFAULT_VIEW;
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [initialView.lng, initialView.lat],
+      zoom: initialView.zoom,
+      attributionControl: { compact: true }
+    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+
+    map.on('moveend', () => {
+      const c = map.getCenter();
+      try {
+        localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify({
+          lng: c.lng, lat: c.lat, zoom: map.getZoom(),
+        }));
+      } catch {}
+    });
+
+    // ----- Slope raster overlay -----
+    // No Overpass — slope is computed straight from the DEM (AWS terrarium
+    // tiles, S3-hosted, no meaningful rate limit) and rendered as a heatmap.
+    const MAX_TERRAIN_TILES = 24;     // soft cap on tiles per update
+    const TERRAIN_Z_MAX = 15;
+    const TERRAIN_Z_MIN = 6;
+    const TILE_SIZE = 256;
+    const RAMP_STOPS = [               // RdYlBu reversed
+      [0.0,  [ 44, 123, 182]],
+      [0.25, [171, 217, 233]],
+      [0.5,  [255, 255, 191]],
+      [0.75, [253, 174,  97]],
+      [1.0,  [215,  25,  28]],
+    ];
+
+    // Road mask line widths (canvas pixels) by OSM class.
+    const ROAD_WIDTHS = {
+      motorway: 5, trunk: 5,
+      motorway_link: 4, trunk_link: 4,
+      primary: 4, secondary: 4, tertiary: 4,
+      primary_link: 3, secondary_link: 3, tertiary_link: 3,
+      minor: 3, street: 3, street_limited: 3, service: 3,
+      pedestrian: 3, living_street: 3,
+      track: 2, path: 2, footway: 2, cycleway: 2, bridleway: 2, steps: 2,
+    };
+
+    let firstLabelLayerId = null;
+    let roadLayerIds = [];
+
+    map.on('load', () => {
+      // Insert the raster under label layers so place names stay readable.
+      for (const l of map.getStyle().layers) {
+        if (l.type === 'symbol') { firstLabelLayerId = l.id; break; }
+      }
+      // Road layers from the basemap's transportation source-layer — we'll
+      // both (a) query them for our mask and (b) mute their fills so our
+      // colored streets are the visible signal.
+      roadLayerIds = map.getStyle().layers
+        .filter(l => l.type === 'line' && l['source-layer'] === 'transportation')
+        .map(l => l.id);
+      muteBasemapRoads();
+
+      scheduleUpdate();
+      map.on('moveend', scheduleUpdate);
+      map.on('zoomend', scheduleUpdate);
+    });
+
+    function muteBasemapRoads() {
+      // Drop the bright white road fills to a soft neutral so the slope-colored
+      // overlay reads as the primary signal. We keep them visible (rather than
+      // hide outright) so queryRenderedFeatures still returns them.
+      for (const id of roadLayerIds) {
+        try {
+          map.setPaintProperty(id, 'line-color', '#e9e9e9');
+          map.setPaintProperty(id, 'line-opacity', 0.45);
+        } catch {}
+      }
+    }
+
+    // ----- Debounced viewport-driven update -----
+    let debounceTimer;
+    let currentRunId = 0;
+
+    function scheduleUpdate() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(updateSlopes, 350);
+    }
+
+    async function updateSlopes() {
+      const runId = ++currentRunId;
+      const bounds = map.getBounds();
+      const viewZoom = map.getZoom();
+
+      const tilePlan = pickTerrainZoom(bounds, viewZoom);
+      if (!tilePlan) {
+        showStatus(`zoom in to see slopes (z=${viewZoom.toFixed(1)})`);
+        hideLegend();
+        clearRaster();
+        return;
+      }
+
+      const { z, minX, maxX, minY, maxY, count } = tilePlan;
+      showStatus(`loading terrain… (${count} tiles @ z${z})`, true);
+
+      const tilePromises = [];
+      for (let ty = minY; ty <= maxY; ty++) {
+        for (let tx = minX; tx <= maxX; tx++) {
+          tilePromises.push(loadTerrainTile(z, tx, ty).then(data => ({ tx, ty, data })));
+        }
+      }
+      const tiles = await Promise.all(tilePromises);
+      if (runId !== currentRunId) return;
+
+      const { slopes, W, H } = computeSlopeBuffer(tiles, z, minX, minY, maxX, maxY, bounds);
+      const mask = buildRoadMask(W, H, z, minX, minY);
+      const { canvas, maxSlope } = colorizeMasked(slopes, mask, W, H);
+      if (runId !== currentRunId) return;
+
+      const nw = tileToLonLat(minX, minY, z);
+      const se = tileToLonLat(maxX + 1, maxY + 1, z);
+      const imageBounds = [
+        [nw.lng, nw.lat],
+        [se.lng, nw.lat],
+        [se.lng, se.lat],
+        [nw.lng, se.lat],
+      ];
+
+      await commitRaster(canvas, imageBounds);
+      if (runId !== currentRunId) return;
+
+      updateLegend(0, maxSlope);
+      hideStatus();
+    }
+
+    // ----- Tile math + zoom selection -----
+    function lonLatToTile(lon, lat, z) {
+      const n = 2 ** z;
+      const x = ((lon + 180) / 360) * n;
+      const latRad = lat * Math.PI / 180;
+      const y = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+      return { x: Math.floor(x), y: Math.floor(y) };
+    }
+
+    function tileToLonLat(x, y, z) {
+      const n = 2 ** z;
+      const lng = (x / n) * 360 - 180;
+      const lat = Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n))) * 180 / Math.PI;
+      return { lng, lat };
+    }
+
+    function tileRangeForBounds(bounds, z) {
+      const sw = lonLatToTile(bounds.getWest(), bounds.getSouth(), z);
+      const ne = lonLatToTile(bounds.getEast(), bounds.getNorth(), z);
+      return { minX: sw.x, maxX: ne.x, minY: ne.y, maxY: sw.y };
+    }
+
+    function pickTerrainZoom(bounds, viewZoom) {
+      // Prefer the highest terrain zoom (sharpest slope) whose tile count fits
+      // the budget. We allow a little detail beyond the viewport zoom for
+      // crisper gradients when the map is zoomed in.
+      const ceiling = Math.min(TERRAIN_Z_MAX, Math.max(TERRAIN_Z_MIN, Math.floor(viewZoom) + 1));
+      for (let z = ceiling; z >= TERRAIN_Z_MIN; z--) {
+        const { minX, maxX, minY, maxY } = tileRangeForBounds(bounds, z);
+        const count = (maxX - minX + 1) * (maxY - minY + 1);
+        if (count <= MAX_TERRAIN_TILES) return { z, minX, maxX, minY, maxY, count };
+      }
+      return null;
+    }
+
+    // ----- Terrain tile cache (AWS terrarium RGB) -----
+    const tileCache = new Map();   // "z/x/y" -> Promise<Uint8ClampedArray|null>
+
+    function loadTerrainTile(z, x, y) {
+      const key = `${z}/${x}/${y}`;
+      if (tileCache.has(key)) return tileCache.get(key);
+      const p = new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = TILE_SIZE; c.height = TILE_SIZE;
+          const ctx = c.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          try { resolve(ctx.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data); }
+          catch { resolve(null); }
+        };
+        img.onerror = () => resolve(null);
+        img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+      });
+      tileCache.set(key, p);
+      return p;
+    }
+
+    // ----- Slope buffer: decode terrain -> per-pixel % grade -----
+    function computeSlopeBuffer(tiles, z, minX, minY, maxX, maxY, bounds) {
+      const cols = maxX - minX + 1;
+      const rows = maxY - minY + 1;
+      const W = cols * TILE_SIZE;
+      const H = rows * TILE_SIZE;
+
+      const elev = new Float32Array(W * H);
+      for (const { tx, ty, data } of tiles) {
+        if (!data) continue;
+        const offX = (tx - minX) * TILE_SIZE;
+        const offY = (ty - minY) * TILE_SIZE;
+        for (let py = 0; py < TILE_SIZE; py++) {
+          const dstRow = (offY + py) * W + offX;
+          const srcBase = py * TILE_SIZE * 4;
+          for (let px = 0; px < TILE_SIZE; px++) {
+            const i = srcBase + px * 4;
+            elev[dstRow + px] = data[i] * 256 + data[i + 1] + data[i + 2] / 256 - 32768;
+          }
+        }
+      }
+
+      const centerLat = (bounds.getNorth() + bounds.getSouth()) / 2;
+      const pixelMeters = (40075016.686 * Math.cos(centerLat * Math.PI / 180)) / (TILE_SIZE * 2 ** z);
+      const twoPx = 2 * pixelMeters;
+
+      // % grade = tan(slope) × 100 = |∇z| × 100 — no atan needed.
+      const slopes = new Float32Array(W * H);
+      for (let y = 1; y < H - 1; y++) {
+        const row = y * W;
+        for (let x = 1; x < W - 1; x++) {
+          const i = row + x;
+          const dzdx = (elev[i + 1] - elev[i - 1]) / twoPx;
+          const dzdy = (elev[i + W] - elev[i - W]) / twoPx;
+          slopes[i] = Math.sqrt(dzdx * dzdx + dzdy * dzdy) * 100;
+        }
+      }
+      return { slopes, W, H };
+    }
+
+    // ----- Road mask: rasterize basemap road features into a binary canvas -----
+    function buildRoadMask(W, H, z, minX, minY) {
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      if (roadLayerIds.length === 0) return canvas;
+
+      const n = 2 ** z;
+      const project = (lng, lat) => {
+        const x = ((lng + 180) / 360) * n;
+        const r = lat * Math.PI / 180;
+        const yy = ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n;
+        return [(x - minX) * TILE_SIZE, (yy - minY) * TILE_SIZE];
+      };
+
+      const features = map.queryRenderedFeatures({ layers: roadLayerIds });
+      ctx.strokeStyle = '#fff';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // Draw thickest-first so thin streets sit on top in the mask.
+      const sorted = features.slice().sort((a, b) => widthFor(b) - widthFor(a));
+      for (const f of sorted) {
+        ctx.lineWidth = widthFor(f);
+        drawGeom(ctx, f.geometry, project);
+      }
+      return canvas;
+    }
+
+    function widthFor(feat) {
+      const cls = feat.properties?.class;
+      return ROAD_WIDTHS[cls] ?? 3;
+    }
+
+    function drawGeom(ctx, geom, project) {
+      if (!geom) return;
+      if (geom.type === 'LineString') return strokeLine(ctx, geom.coordinates, project);
+      if (geom.type === 'MultiLineString') {
+        for (const ls of geom.coordinates) strokeLine(ctx, ls, project);
+      }
+    }
+
+    function strokeLine(ctx, coords, project) {
+      ctx.beginPath();
+      for (let i = 0; i < coords.length; i++) {
+        const [px, py] = project(coords[i][0], coords[i][1]);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    // ----- Compose: color slope where mask is on, transparent elsewhere -----
+    function colorizeMasked(slopes, maskCanvas, W, H) {
+      const mctx = maskCanvas.getContext('2d');
+      const mask = mctx.getImageData(0, 0, W, H).data;
+
+      // Sample slopes only under road pixels for the auto-scale percentile.
+      const sample = [];
+      for (let i = 0; i < W * H; i++) {
+        if (mask[i * 4] > 32) {
+          const s = slopes[i];
+          if (s > 0) sample.push(s);
+        }
+      }
+      sample.sort((a, b) => a - b);
+      const p98 = sample[Math.floor(sample.length * 0.98)] ?? 5;
+      const maxSlope = Math.max(p98, 2);   // anything under 2% looks flat anyway
+      const invMax = 1 / maxSlope;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(W, H);
+      const buf = img.data;
+      for (let i = 0; i < W * H; i++) {
+        const a = mask[i * 4];
+        if (a < 8) { buf[i * 4 + 3] = 0; continue; }
+        const t = Math.min(1, slopes[i] * invMax);
+        const c = rampColor(t);
+        const o = i * 4;
+        buf[o] = c[0]; buf[o + 1] = c[1]; buf[o + 2] = c[2];
+        buf[o + 3] = a;
+      }
+      ctx.putImageData(img, 0, 0);
+      return { canvas, maxSlope };
+    }
+
+    function rampColor(t) {
+      for (let i = 0; i < RAMP_STOPS.length - 1; i++) {
+        const [t1, c1] = RAMP_STOPS[i];
+        const [t2, c2] = RAMP_STOPS[i + 1];
+        if (t <= t2) {
+          const f = (t - t1) / (t2 - t1);
+          return [c1[0] + (c2[0] - c1[0]) * f, c1[1] + (c2[1] - c1[1]) * f, c1[2] + (c2[2] - c1[2]) * f];
+        }
+      }
+      return RAMP_STOPS[RAMP_STOPS.length - 1][1];
+    }
+
+    // ----- Raster source/layer plumbing -----
+    let currentRasterUrl = null;
+
+    function commitRaster(canvas, coords) {
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => {
+          if (!blob) { resolve(); return; }
+          const url = URL.createObjectURL(blob);
+          const prev = currentRasterUrl;
+          currentRasterUrl = url;
+
+          const src = map.getSource('slope-raster');
+          if (src) {
+            src.updateImage({ url, coordinates: coords });
+          } else {
+            map.addSource('slope-raster', { type: 'image', url, coordinates: coords });
+            map.addLayer({
+              id: 'slope-raster',
+              type: 'raster',
+              source: 'slope-raster',
+              paint: {
+                'raster-opacity': 1.0,
+                'raster-resampling': 'linear',
+                'raster-fade-duration': 0,
+              },
+            }, firstLabelLayerId || undefined);
+          }
+
+          // Release the old blob URL once MapLibre has had a frame to swap in
+          // the new image — revoke too early and the texture upload fails.
+          if (prev) setTimeout(() => URL.revokeObjectURL(prev), 1000);
+          resolve();
+        }, 'image/png');
+      });
+    }
+
+    function clearRaster() {
+      if (map.getLayer('slope-raster')) map.removeLayer('slope-raster');
+      if (map.getSource('slope-raster')) map.removeSource('slope-raster');
+      if (currentRasterUrl) { URL.revokeObjectURL(currentRasterUrl); currentRasterUrl = null; }
+    }
+
+    // ----- UI helpers -----
+    const statusEl = document.getElementById('status');
+    const statusTextEl = document.getElementById('status-text');
+    const legendEl = document.getElementById('legend');
+    const legendMinEl = document.getElementById('legend-min');
+    const legendMidEl = document.getElementById('legend-mid');
+    const legendMaxEl = document.getElementById('legend-max');
+
+    function showStatus(text, withSpinner = false) {
+      statusTextEl.textContent = text;
+      statusEl.hidden = false;
+      statusEl.querySelector('.spinner').style.visibility = withSpinner ? 'visible' : 'hidden';
+    }
+    function hideStatus() { statusEl.hidden = true; }
+    function hideLegend() { legendEl.hidden = true; }
+    function updateLegend(min, max) {
+      const fmt = (v) => (v < 10 ? v.toFixed(1) : v.toFixed(0)) + '%';
+      legendMinEl.textContent = fmt(min);
+      legendMidEl.textContent = fmt((min + max) / 2);
+      legendMaxEl.textContent = fmt(max);
+      legendEl.hidden = false;
+    }
+
+    // ----- City search via Nominatim -----
+    const searchEl = document.getElementById('search');
+    const searchInputEl = document.getElementById('search-input');
+
+    searchInputEl.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const q = searchInputEl.value.trim();
+      if (!q) return;
+      searchEl.classList.add('searching');
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`;
+        const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+        const results = await res.json();
+        if (!results.length) {
+          searchInputEl.value = q + ' — not found';
+          setTimeout(() => { searchInputEl.value = q; }, 1200);
+          return;
+        }
+        const r = results[0];
+        if (r.boundingbox) {
+          const [s, n, w, ee] = r.boundingbox.map(Number);
+          map.fitBounds([[w, s], [ee, n]], { padding: 60, maxZoom: 14, duration: 800 });
+        } else {
+          map.flyTo({ center: [Number(r.lon), Number(r.lat)], zoom: 13.5, duration: 800 });
+        }
+        searchInputEl.blur();
+      } catch (err) {
+        console.error(err);
+      } finally {
+        searchEl.classList.remove('searching');
+      }
+    });
+  </script>
+</body>
+</html>
