@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/alessandro/Documents/git-projects/slope-map remote -v)",
+      "Bash(npm install *)",
+      "Bash(npx wrangler *)",
+      "Bash(command -v nvm)",
+      "Read(//Users/alessandro/.nvm/versions/node/**)",
+      "Bash(command -v fnm)",
+      "Bash(command -v volta)",
+      "Read(//opt/homebrew/opt/**)"
+    ]
+  }
+}
