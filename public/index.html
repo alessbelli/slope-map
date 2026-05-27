@@ -172,6 +172,7 @@
       attributionControl: { compact: true }
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+    window.__slopeMap = map; /* testing hook */
 
     map.on('moveend', () => {
       const c = map.getCenter();
@@ -292,6 +293,7 @@
       await commitRaster(canvas, imageBounds);
       if (runId !== currentRunId) return;
 
+      window.__slopeReady = Date.now(); /* testing hook */
       updateLegend(0, maxSlope);
       hideStatus();
     }
@@ -392,8 +394,25 @@
           slopes[i] = Math.sqrt(dzdx * dzdx + dzdy * dzdy) * 100;
         }
       }
+      /* testing hook – store slope buffer for getSlopeAt() */
+      window.__slopeBuffer = { slopes, W, H, z, minX, minY };
+      window.__slopeReady = false;
       return { slopes, W, H };
     }
+
+    /* testing hook – query % grade at a geographic coordinate */
+    window.getSlopeAt = function(lat, lng) {
+      const d = window.__slopeBuffer;
+      if (!d) return null;
+      const n = Math.pow(2, d.z);
+      const tileX = ((lng + 180) / 360) * n;
+      const latRad = lat * Math.PI / 180;
+      const tileY = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+      const px = Math.round((tileX - d.minX) * 256);
+      const py = Math.round((tileY - d.minY) * 256);
+      if (px < 0 || px >= d.W || py < 0 || py >= d.H) return null;
+      return d.slopes[py * d.W + px];
+    };
 
     // ----- Road mask: rasterize basemap road features into a binary canvas -----
     function buildRoadMask(W, H, z, minX, minY) {

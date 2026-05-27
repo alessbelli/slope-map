@@ -4,9 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers playwright test",
+    "test:headed": "PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers playwright test --headed",
+    "test:update-snapshots": "PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers playwright test --update-snapshots"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
     "wrangler": "^3.90.0"
   }
 }
