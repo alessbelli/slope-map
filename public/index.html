@@ -276,9 +276,13 @@
       const tiles = await Promise.all(tilePromises);
       if (runId !== currentRunId) return;
 
-      const { slopes, W, H } = computeSlopeBuffer(tiles, z, minX, minY, maxX, maxY, bounds);
-      const mask = buildRoadMask(W, H, z, minX, minY);
-      const { canvas, maxSlope } = colorizeMasked(slopes, mask, W, H);
+      // Build the road mask (+ direction field) before computing slopes so the
+      // direction data is ready to project the elevation gradient.
+      const W = (maxX - minX + 1) * TILE_SIZE;
+      const H = (maxY - minY + 1) * TILE_SIZE;
+      const { maskCanvas, dirCanvas } = buildRoadMask(W, H, z, minX, minY);
+      const { slopes } = computeSlopeBuffer(tiles, z, minX, minY, maxX, maxY, bounds, dirCanvas);
+      const { canvas, maxSlope } = colorizeMasked(slopes, maskCanvas, W, H);
       if (runId !== currentRunId) return;
 
       const nw = tileToLonLat(minX, minY, z);
@@ -358,7 +362,11 @@
     }
 
     // ----- Slope buffer: decode terrain -> per-pixel % grade -----
-    function computeSlopeBuffer(tiles, z, minX, minY, maxX, maxY, bounds) {
+    // When dirCanvas is provided (road direction field from buildRoadMask),
+    // each road pixel uses only the along-road component of the elevation
+    // gradient.  This prevents perpendicular terrain features (embankment
+    // walls, river banks) from inflating the displayed slope.
+    function computeSlopeBuffer(tiles, z, minX, minY, maxX, maxY, bounds, dirCanvas) {
       const cols = maxX - minX + 1;
       const rows = maxY - minY + 1;
       const W = cols * TILE_SIZE;
@@ -383,6 +391,13 @@
       const pixelMeters = (40075016.686 * Math.cos(centerLat * Math.PI / 180)) / (TILE_SIZE * 2 ** z);
       const twoPx = 2 * pixelMeters;
 
+      // Read road direction data (R=cosθ, G=sinθ, A=presence) from dirCanvas.
+      let dirData = null;
+      if (dirCanvas) {
+        const dctx = dirCanvas.getContext('2d');
+        dirData = dctx.getImageData(0, 0, W, H).data;
+      }
+
       // % grade = tan(slope) × 100 = |∇z| × 100 — no atan needed.
       const slopes = new Float32Array(W * H);
       for (let y = 1; y < H - 1; y++) {
@@ -391,6 +406,25 @@
           const i = row + x;
           const dzdx = (elev[i + 1] - elev[i - 1]) / twoPx;
           const dzdy = (elev[i + W] - elev[i - W]) / twoPx;
+
+          if (dirData) {
+            const di = i * 4;
+            if (dirData[di + 3] > 64) {
+              // Recover cosθ / sinθ from encoded [0,255] values and renormalise
+              // to correct for blending at anti-aliased edges.
+              let cosθ = (dirData[di]     / 127.5) - 1;
+              let sinθ = (dirData[di + 1] / 127.5) - 1;
+              const norm = Math.sqrt(cosθ * cosθ + sinθ * sinθ);
+              if (norm > 0.1) {
+                cosθ /= norm;
+                sinθ /= norm;
+                // Project ∇z onto the road tangent — cross-road elevation
+                // changes (embankment walls, river banks) cancel out.
+                slopes[i] = Math.abs(dzdx * cosθ + dzdy * sinθ) * 100;
+                continue;
+              }
+            }
+          }
           slopes[i] = Math.sqrt(dzdx * dzdx + dzdy * dzdy) * 100;
         }
       }
@@ -415,13 +449,23 @@
     };
 
     // ----- Road mask: rasterize basemap road features into a binary canvas -----
+    // Also builds a direction canvas encoding the road tangent vector at each
+    // road pixel.  Direction is stored as (cosθ, sinθ) mapped to (R, G)
+    // in [0,255] so it survives canvas blending and can be renormalised.
     function buildRoadMask(W, H, z, minX, minY) {
-      const canvas = document.createElement('canvas');
-      canvas.width = W; canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-      if (roadLayerIds.length === 0) return canvas;
+      const maskCanvas = document.createElement('canvas');
+      maskCanvas.width = W; maskCanvas.height = H;
+      const mctx = maskCanvas.getContext('2d');
+      mctx.fillStyle = '#000';
+      mctx.fillRect(0, 0, W, H);
+
+      const dirCanvas = document.createElement('canvas');
+      dirCanvas.width = W; dirCanvas.height = H;
+      const dctx = dirCanvas.getContext('2d');
+      // transparent = no direction data (non-road pixel)
+      dctx.clearRect(0, 0, W, H);
+
+      if (roadLayerIds.length === 0) return { maskCanvas, dirCanvas };
 
       const n = 2 ** z;
       const project = (lng, lat) => {
@@ -432,17 +476,49 @@
       };
 
       const features = map.queryRenderedFeatures({ layers: roadLayerIds });
-      ctx.strokeStyle = '#fff';
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+      mctx.strokeStyle = '#fff';
+      mctx.lineCap = 'round';
+      mctx.lineJoin = 'round';
 
       // Draw thickest-first so thin streets sit on top in the mask.
       const sorted = features.slice().sort((a, b) => widthFor(b) - widthFor(a));
       for (const f of sorted) {
-        ctx.lineWidth = widthFor(f);
-        drawGeom(ctx, f.geometry, project);
+        const w = widthFor(f);
+        mctx.lineWidth = w;
+        drawGeom(mctx, f.geometry, project);
+        drawGeomDirection(dctx, f.geometry, project, w);
       }
-      return canvas;
+      return { maskCanvas, dirCanvas };
+    }
+
+    // Draw each line segment onto a direction canvas with the segment's tangent
+    // encoded as RGBA: R = (cosθ+1)*127.5, G = (sinθ+1)*127.5, A = 255.
+    // Drawing per-segment (rather than per-polyline) ensures every pixel gets
+    // the tangent of its actual segment, not an averaged polyline direction.
+    function drawGeomDirection(ctx, geom, project, width) {
+      if (!geom) return;
+      const lines =
+        geom.type === 'LineString' ? [geom.coordinates] :
+        geom.type === 'MultiLineString' ? geom.coordinates : [];
+      ctx.lineCap = 'round';
+      ctx.lineWidth = width;
+      for (const ls of lines) {
+        for (let i = 0; i < ls.length - 1; i++) {
+          const [x1, y1] = project(ls[i][0], ls[i][1]);
+          const [x2, y2] = project(ls[i + 1][0], ls[i + 1][1]);
+          const dx = x2 - x1;
+          const dy = y2 - y1;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len < 0.5) continue;
+          const r = Math.round(((dx / len) + 1) * 127.5);
+          const g = Math.round(((dy / len) + 1) * 127.5);
+          ctx.strokeStyle = `rgba(${r},${g},0,1)`;
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        }
+      }
     }
 
     function widthFor(feat) {
